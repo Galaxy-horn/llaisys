@@ -6,11 +6,10 @@ template <typename T>
 void rope_(T *out, const T *in, const int64_t *pos_ids, size_t seqlen, size_t nhead, size_t d, float theta) {
     size_t half_d = d / 2;
     for (size_t s = 0; s < seqlen; s++) {
-        int64_t pos = pos_ids[s];
+        float pos = static_cast<float>(pos_ids[s]);
         for (size_t h = 0; h < nhead; h++) {
             for (size_t j = 0; j < half_d; j++) {
-                float freq = std::pow(theta, -2.0f * j / d);
-                float angle = pos * freq;
+                float angle = pos / std::pow(theta, 2.0f * j / d);
                 float cos_val = std::cos(angle);
                 float sin_val = std::sin(angle);
                 
