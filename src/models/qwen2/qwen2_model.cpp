@@ -81,28 +81,27 @@ LlaisysQwen2Weights Qwen2Model::getWeights() {
 }
 
 int64_t Qwen2Model::infer(int64_t *token_ids, size_t ntoken) {
-    // TODO: Implement forward pass
+    //向前传播
     size_t seqlen = ntoken - cur_seq_len;
     
-    // Embedding
+    //embedding
     auto idx_tensor = Tensor::create({seqlen}, LLAISYS_DTYPE_I64, device_type, device_id);
     idx_tensor->load(token_ids + cur_seq_len);
     auto x = Tensor::create({seqlen, meta.hs}, meta.dtype, device_type, device_id);
     ops::embedding(x, idx_tensor, in_embed);
     
-    // Position IDs
+    //位置编码ID
     std::vector<int64_t> pos_ids_vec(seqlen);
     for (size_t i = 0; i < seqlen; i++) pos_ids_vec[i] = cur_seq_len + i;
     auto pos_ids = Tensor::create({seqlen}, LLAISYS_DTYPE_I64, device_type, device_id);
     pos_ids->load(pos_ids_vec.data());
     
-    // Transformer layers
+    //Transformer层
     for (size_t layer = 0; layer < meta.nlayer; layer++) {
-        // Attention norm
+        
         auto x_norm = Tensor::create({seqlen, meta.hs}, meta.dtype, device_type, device_id);
         ops::rms_norm(x_norm, x, attn_norm_w[layer], meta.epsilon);
         
-        // Q, K, V projections
         auto q = Tensor::create({seqlen, meta.nh * meta.dh}, meta.dtype, device_type, device_id);
         auto k = Tensor::create({seqlen, meta.nkvh * meta.dh}, meta.dtype, device_type, device_id);
         auto v = Tensor::create({seqlen, meta.nkvh * meta.dh}, meta.dtype, device_type, device_id);
@@ -110,45 +109,41 @@ int64_t Qwen2Model::infer(int64_t *token_ids, size_t ntoken) {
         ops::linear(k, x_norm, attn_k_w[layer], attn_k_b[layer]);
         ops::linear(v, x_norm, attn_v_w[layer], attn_v_b[layer]);
         
-        // Reshape to [seqlen, nhead, dh]
+        //重塑
         q = q->view({seqlen, meta.nh, meta.dh});
         k = k->view({seqlen, meta.nkvh, meta.dh});
         v = v->view({seqlen, meta.nkvh, meta.dh});
         
-        // RoPE
+        //rope
         auto q_rope = Tensor::create({seqlen, meta.nh, meta.dh}, meta.dtype, device_type, device_id);
         auto k_rope = Tensor::create({seqlen, meta.nkvh, meta.dh}, meta.dtype, device_type, device_id);
         ops::rope(q_rope, q, pos_ids, meta.theta);
         ops::rope(k_rope, k, pos_ids, meta.theta);
         
-        // Update KV cache
+        //更新KV cache
         auto k_cache_slice = k_cache[layer]->slice(0, cur_seq_len, cur_seq_len + seqlen);
         auto v_cache_slice = v_cache[layer]->slice(0, cur_seq_len, cur_seq_len + seqlen);
         ops::rearrange(k_cache_slice, k_rope);
         ops::rearrange(v_cache_slice, v);
         
-        // Get full KV from cache
         auto k_full = k_cache[layer]->slice(0, 0, cur_seq_len + seqlen);
         auto v_full = v_cache[layer]->slice(0, 0, cur_seq_len + seqlen);
         
-        // Self attention
+        //self attention
         auto attn_out = Tensor::create({seqlen, meta.nh, meta.dh}, meta.dtype, device_type, device_id);
         float scale = 1.0f / std::sqrt(static_cast<float>(meta.dh));
         ops::self_attention(attn_out, q_rope, k_full, v_full, scale);
         
-        // Output projection
         attn_out = attn_out->view({seqlen, meta.nh * meta.dh});
         auto attn_proj = Tensor::create({seqlen, meta.hs}, meta.dtype, device_type, device_id);
         ops::linear(attn_proj, attn_out, attn_o_w[layer], nullptr);
         
-        // Residual
         ops::add(x, x, attn_proj);
         
-        // MLP norm
+        //MLP
         auto x_mlp = Tensor::create({seqlen, meta.hs}, meta.dtype, device_type, device_id);
         ops::rms_norm(x_mlp, x, mlp_norm_w[layer], meta.epsilon);
         
-        // MLP
         auto gate = Tensor::create({seqlen, meta.di}, meta.dtype, device_type, device_id);
         auto up = Tensor::create({seqlen, meta.di}, meta.dtype, device_type, device_id);
         ops::linear(gate, x_mlp, mlp_gate_w[layer], nullptr);
@@ -160,25 +155,24 @@ int64_t Qwen2Model::infer(int64_t *token_ids, size_t ntoken) {
         auto mlp_proj = Tensor::create({seqlen, meta.hs}, meta.dtype, device_type, device_id);
         ops::linear(mlp_proj, mlp_out, mlp_down_w[layer], nullptr);
         
-        // Residual
+        // residual
         ops::add(x, x, mlp_proj);
     }
     
-    // Final norm
+    //归一化
     auto x_final = Tensor::create({seqlen, meta.hs}, meta.dtype, device_type, device_id);
     ops::rms_norm(x_final, x, out_norm_w, meta.epsilon);
     
-    // LM head - only last token
+    //用最后一个预测
     auto last_hidden = x_final->slice(0, seqlen - 1, seqlen);
     auto logits = Tensor::create({1, meta.voc}, meta.dtype, device_type, device_id);
     ops::linear(logits, last_hidden, out_embed, nullptr);
     
-    // Argmax
+    //argmax
     auto max_idx = Tensor::create({1}, LLAISYS_DTYPE_I64, device_type, device_id);
     auto max_val = Tensor::create({1}, meta.dtype, device_type, device_id);
     ops::argmax(max_idx, max_val, logits->view({meta.voc}));
     
-    // Get result
     int64_t result;
     std::byte *data = max_idx->data();
     std::memcpy(&result, data, sizeof(int64_t));
