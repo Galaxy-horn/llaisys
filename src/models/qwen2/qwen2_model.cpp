@@ -120,7 +120,14 @@ int64_t Qwen2Model::infer(int64_t *token_ids, size_t ntoken) {
         ops::rope(q_rope, q, pos_ids, meta.theta);
         ops::rope(k_rope, k, pos_ids, meta.theta);
         
+        //更新KV cache
+        auto k_cache_slice = k_cache[layer]->slice(0, cur_seq_len, cur_seq_len + seqlen);
+        auto v_cache_slice = v_cache[layer]->slice(0, cur_seq_len, cur_seq_len + seqlen);
+        ops::rearrange(k_cache_slice, k_rope);
+        ops::rearrange(v_cache_slice, v);
         
+        auto k_full = k_cache[layer]->slice(0, 0, cur_seq_len + seqlen);
+        auto v_full = v_cache[layer]->slice(0, 0, cur_seq_len + seqlen);
         
         //self attention
         auto attn_out = Tensor::create({seqlen, meta.nh, meta.dh}, meta.dtype, device_type, device_id);
