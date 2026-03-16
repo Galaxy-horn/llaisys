@@ -1,9 +1,11 @@
 #include "linear_cpu.hpp"
 #include "../../../utils.hpp"
+#include <omp.h>
 
 template <typename T>
 void linear_(T *out, const T *in, const T *weight, const T *bias, size_t batch, size_t in_dim, size_t out_dim) {
-    for (size_t b = 0; b < batch; b++) {
+    #pragma omp parallel for
+    for (int b = 0; b < static_cast<int>(batch); b++) {
         for (size_t o = 0; o < out_dim; o++) {
             float sum = 0.0f;
             for (size_t i = 0; i < in_dim; i++) {

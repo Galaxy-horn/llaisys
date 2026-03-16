@@ -3,6 +3,9 @@ set_encodings("utf-8")
 
 add_includedirs("include")
 
+-- 添加 OpenMP 包
+add_requires("openmp")
+
 -- CPU --
 includes("xmake/cpu.lua")
 
